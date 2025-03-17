@@ -1,0 +1,76 @@
+# Node modules
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+*.env.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+debug.log*
+pids/
+*.pid
+*.seed
+
+# Database files
+data/
+dump/
+*.sqlite
+*.sqlite3
+*.db
+
+# Build artifacts
+dist/
+out/
+build/
+coverage/
+.DS_Store
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.iml
+*.sublime-workspace
+*.sublime-project
+.editorconfig
+
+# Miscellaneous
+*.swp
+*.swo
+Thumbs.db
+.cache/
+.tmp/
+temp/
+tmp/
+
+# Testing
+/coverage
+/.nyc_output
+/cypress/videos/
+/cypress/screenshots/
+
+# Email credentials and tokens
+*.pem
+*.key
+smtp-credentials.json
+tokens.json
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
