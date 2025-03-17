@@ -1,33 +1,35 @@
-import express from 'express';
+import { Router } from 'express';
 import {
   signup,
   login,
-  logout,
   verifyEmail,
-  verifyPhone,
+  verifyPhoneOTP,
   resendEmailOTP,
-  resendSmsOTP,
+  resendPhoneOTP,
   forgotPassword,
   resetPassword,
   updatePassword,
+  logout,
 } from '../controllers/auth.controller';
 import { protect } from '../middleware/auth.middleware';
+import { getProfile } from '../controllers/user.controller';
 
-const router = express.Router();
+const router = Router();
 
 // Public routes
 router.post('/signup', signup);
 router.post('/login', login);
-router.get('/logout', logout);
 router.post('/verify-email', verifyEmail);
-router.post('/verify-phone', verifyPhone);
+router.post('/verify-phone', verifyPhoneOTP);
 router.post('/resend-email-otp', resendEmailOTP);
-router.post('/resend-sms-otp', resendSmsOTP);
+router.post('/resend-phone-otp', resendPhoneOTP);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
+router.post('/logout', logout);
 
 // Protected routes
-router.use(protect); // All routes after this middleware require authentication
+router.use(protect);
+router.get('/me', getProfile);
 router.patch('/update-password', updatePassword);
 
 export default router; 

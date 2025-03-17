@@ -1,352 +1,497 @@
-// Base API URL
-const API_URL = 'http://localhost:5000/api/v1';
+// Store session data
+let sessionData = {
+  userId: localStorage.getItem('userId') || null,
+  token: localStorage.getItem('token') || null,
+  isEmailVerified: localStorage.getItem('isEmailVerified') === 'true',
+  isPhoneVerified: localStorage.getItem('isPhoneVerified') === 'true',
+  firstName: localStorage.getItem('firstName') || null,
+  phoneVerificationId: localStorage.getItem('phoneVerificationId') || null,
+};
 
-// Store auth token
-let authToken = localStorage.getItem('authToken');
-let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
+// API endpoint
+const API_URL = '/api/v1';
 
-// Helper function to make API requests
-const api = async (endpoint, method = 'GET', data = null) => {
-  const headers = {
-    'Content-Type': 'application/json',
-  };
-
-  // Add auth token if available
-  if (authToken) {
-    headers['Authorization'] = `Bearer ${authToken}`;
+// Function to update UI based on auth state
+function updateAuthUI() {
+  const isLoggedIn = !!sessionData.token;
+  
+  // Update navigation
+  document.querySelectorAll('.nav-item').forEach(item => {
+    const tabId = item.getAttribute('data-bs-target');
+    
+    // Show/hide tabs based on auth state
+    if (isLoggedIn) {
+      if (tabId === '#signup-tab' || tabId === '#login-tab') {
+        item.classList.add('d-none');
+      } else {
+        item.classList.remove('d-none');
+      }
+    } else {
+      if (tabId === '#signup-tab' || tabId === '#login-tab') {
+        item.classList.remove('d-none');
+      } else {
+        item.classList.add('d-none');
+      }
+    }
+  });
+  
+  // Update verification UI
+  if (isLoggedIn) {
+    // Email verification status
+    const emailVerifyBtn = document.getElementById('verify-email-btn');
+    const emailVerifyStatus = document.getElementById('email-verification-status');
+    
+    if (sessionData.isEmailVerified) {
+      emailVerifyBtn.disabled = true;
+      emailVerifyStatus.textContent = 'Email verified ✓';
+      emailVerifyStatus.classList.add('text-success');
+    } else {
+      emailVerifyBtn.disabled = false;
+      emailVerifyStatus.textContent = 'Email not verified ✗';
+      emailVerifyStatus.classList.add('text-danger');
+    }
+    
+    // Phone verification status
+    const phoneVerifyBtn = document.getElementById('verify-phone-btn');
+    const phoneVerifyStatus = document.getElementById('phone-verification-status');
+    
+    if (sessionData.isPhoneVerified) {
+      phoneVerifyBtn.disabled = true;
+      phoneVerifyStatus.textContent = 'Phone verified ✓';
+      phoneVerifyStatus.classList.add('text-success');
+    } else {
+      phoneVerifyBtn.disabled = false;
+      phoneVerifyStatus.textContent = 'Phone not verified ✗';
+      phoneVerifyStatus.classList.add('text-danger');
+    }
+    
+    // Update user info section
+    const userInfoSection = document.getElementById('user-info');
+    if (userInfoSection) {
+      userInfoSection.classList.remove('d-none');
+      document.getElementById('user-greeting').textContent = `Hello, ${sessionData.firstName || 'User'}!`;
+      document.getElementById('email-status').textContent = sessionData.isEmailVerified ? 'Verified ✓' : 'Not Verified ✗';
+      document.getElementById('phone-status').textContent = sessionData.isPhoneVerified ? 'Verified ✓' : 'Not Verified ✗';
+    }
+  } else {
+    // Hide user info when logged out
+    const userInfoSection = document.getElementById('user-info');
+    if (userInfoSection) {
+      userInfoSection.classList.add('d-none');
+    }
   }
+}
 
-  const config = {
+// Function to make API requests
+async function apiRequest(endpoint, method = 'GET', data = null) {
+  const url = `${API_URL}${endpoint}`;
+  
+  const options = {
     method,
-    headers,
+    headers: {
+      'Content-Type': 'application/json',
+    },
   };
-
-  if (data && (method === 'POST' || method === 'PATCH' || method === 'PUT')) {
-    config.body = JSON.stringify(data);
+  
+  if (sessionData.token) {
+    options.headers.Authorization = `Bearer ${sessionData.token}`;
   }
-
+  
+  if (data) {
+    options.body = JSON.stringify(data);
+  }
+  
   try {
-    const response = await fetch(`${API_URL}${endpoint}`, config);
-    const result = await response.json();
+    const response = await fetch(url, options);
+    const responseData = await response.json();
+    
+    // Display API response
+    displayApiResponse(responseData);
     
     if (!response.ok) {
-      throw new Error(result.message || 'Something went wrong');
+      throw new Error(responseData.message || 'API request failed');
     }
     
-    return result;
+    return responseData;
   } catch (error) {
+    displayApiError(error.message);
     throw error;
   }
-};
+}
 
-// Display response in appropriate container
-const displayResponse = (containerId, response, isError = false) => {
-  const container = document.getElementById(containerId);
-  container.classList.remove('hidden');
+// Function to display API response
+function displayApiResponse(data) {
+  const responseDisplay = document.getElementById('api-response');
+  responseDisplay.textContent = JSON.stringify(data, null, 2);
+  responseDisplay.classList.remove('d-none');
+}
+
+// Function to display API error
+function displayApiError(message) {
+  const errorDisplay = document.getElementById('api-error');
+  errorDisplay.textContent = message;
+  errorDisplay.classList.remove('d-none');
   
-  if (isError) {
-    container.innerHTML = `<div class="alert alert-danger">${response}</div>`;
-  } else {
-    container.innerHTML = `<pre>${JSON.stringify(response, null, 2)}</pre>`;
+  // Hide error after 5 seconds
+  setTimeout(() => {
+    errorDisplay.classList.add('d-none');
+  }, 5000);
+}
+
+// Function to handle signup
+async function handleSignup(event) {
+  event.preventDefault();
+  
+  const firstName = document.getElementById('signup-firstname').value;
+  const lastName = document.getElementById('signup-lastname').value;
+  const email = document.getElementById('signup-email').value;
+  const phone = document.getElementById('signup-phone').value;
+  const password = document.getElementById('signup-password').value;
+  const confirmPassword = document.getElementById('signup-confirm-password').value;
+  
+  // Validate form
+  if (!firstName || !lastName || !email || !password) {
+    displayApiError('All fields are required');
+    return;
   }
-};
-
-// Update UI based on authentication status
-const updateAuthUI = () => {
-  const userInfoCard = document.getElementById('userInfoCard');
   
-  if (currentUser) {
-    // User is logged in
-    userInfoCard.classList.remove('hidden');
-    
-    document.getElementById('userFullName').textContent = `${currentUser.firstName} ${currentUser.lastName}`;
-    document.getElementById('userEmail').textContent = currentUser.email;
-    document.getElementById('userPhone').textContent = currentUser.phoneNumber;
-    document.getElementById('userEmailVerified').textContent = currentUser.isEmailVerified ? 'Yes' : 'No';
-    document.getElementById('userPhoneVerified').textContent = currentUser.isPhoneVerified ? 'Yes' : 'No';
-    
-    // Prefill email/phone inputs for convenience
-    document.getElementById('verifyEmailAddress').value = currentUser.email;
-    document.getElementById('verifyPhoneNumber').value = currentUser.phoneNumber;
-    document.getElementById('forgotEmail').value = currentUser.email;
-  } else {
-    // User is not logged in
-    userInfoCard.classList.add('hidden');
+  if (password !== confirmPassword) {
+    displayApiError('Passwords do not match');
+    return;
   }
-};
-
-// Handle signup form submission
-document.getElementById('signupForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  
-  const userData = {
-    firstName: document.getElementById('firstName').value,
-    lastName: document.getElementById('lastName').value,
-    email: document.getElementById('signupEmail').value,
-    phoneNumber: document.getElementById('phoneNumber').value,
-    password: document.getElementById('signupPassword').value,
-  };
   
   try {
-    const response = await api('/auth/signup', 'POST', userData);
-    
-    // Save auth token and user data
-    authToken = response.token;
-    currentUser = response.data.user;
-    
-    localStorage.setItem('authToken', authToken);
-    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-    
-    // Update UI
-    updateAuthUI();
-    
-    // Display response
-    displayResponse('signupResponse', {
-      status: 'Success',
-      message: 'Account created successfully!',
-      user: response.data.user,
-      note: 'Check console logs for OTP codes'
+    const data = await apiRequest('/auth/signup', 'POST', {
+      firstName,
+      lastName,
+      email,
+      phone,
+      password,
     });
     
-    // Show an alert about OTPs
-    alert('Account created successfully! Check the server console for OTP codes sent for verification.');
+    // Store user ID for verification
+    sessionData.userId = data.userId;
+    sessionData.firstName = firstName;
+    localStorage.setItem('userId', data.userId);
+    localStorage.setItem('firstName', firstName);
+    
+    // Show verification tab
+    document.querySelector('[data-bs-target="#verify-tab"]').click();
+    
+    // Update UI
+    updateAuthUI();
   } catch (error) {
-    displayResponse('signupResponse', error.message, true);
+    console.error('Signup error:', error);
   }
-});
+}
 
-// Handle login form submission
-document.getElementById('loginForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
+// Function to handle login
+async function handleLogin(event) {
+  event.preventDefault();
   
-  const loginData = {
-    email: document.getElementById('loginEmail').value,
-    password: document.getElementById('loginPassword').value,
-  };
+  const email = document.getElementById('login-email').value;
+  const password = document.getElementById('login-password').value;
+  
+  // Validate form
+  if (!email || !password) {
+    displayApiError('Email and password are required');
+    return;
+  }
   
   try {
-    const response = await api('/auth/login', 'POST', loginData);
+    const data = await apiRequest('/auth/login', 'POST', {
+      email,
+      password,
+    });
     
-    // Save auth token and user data
-    authToken = response.token;
-    currentUser = response.data.user;
+    // Store session data
+    sessionData.token = data.token;
+    sessionData.userId = data.data.user._id;
+    sessionData.isEmailVerified = data.data.user.isEmailVerified;
+    sessionData.isPhoneVerified = data.data.user.isPhoneVerified;
+    sessionData.firstName = data.data.user.firstName;
     
-    localStorage.setItem('authToken', authToken);
-    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+    // Save to localStorage
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('userId', data.data.user._id);
+    localStorage.setItem('isEmailVerified', data.data.user.isEmailVerified);
+    localStorage.setItem('isPhoneVerified', data.data.user.isPhoneVerified);
+    localStorage.setItem('firstName', data.data.user.firstName);
+    
+    // Update UI
+    updateAuthUI();
+  } catch (error) {
+    console.error('Login error:', error);
+  }
+}
+
+// Function to handle logout
+async function handleLogout() {
+  try {
+    await apiRequest('/auth/logout', 'POST');
+    
+    // Clear session data
+    sessionData = {
+      userId: null,
+      token: null,
+      isEmailVerified: false,
+      isPhoneVerified: false,
+      firstName: null,
+      phoneVerificationId: null,
+    };
+    
+    // Clear localStorage
+    localStorage.removeItem('token');
+    localStorage.removeItem('userId');
+    localStorage.removeItem('isEmailVerified');
+    localStorage.removeItem('isPhoneVerified');
+    localStorage.removeItem('firstName');
+    localStorage.removeItem('phoneVerificationId');
     
     // Update UI
     updateAuthUI();
     
-    // Display response
-    displayResponse('loginResponse', {
-      status: 'Success',
-      message: 'Logged in successfully!',
-      user: response.data.user
+    // Go to login tab
+    document.querySelector('[data-bs-target="#login-tab"]').click();
+  } catch (error) {
+    console.error('Logout error:', error);
+  }
+}
+
+// Function to handle email verification
+async function handleEmailVerification(event) {
+  event.preventDefault();
+  
+  const otp = document.getElementById('email-otp').value;
+  
+  // Validate form
+  if (!otp) {
+    displayApiError('OTP is required');
+    return;
+  }
+  
+  try {
+    await apiRequest('/auth/verify-email', 'POST', {
+      userId: sessionData.userId,
+      otp,
+    });
+    
+    // Update session data
+    sessionData.isEmailVerified = true;
+    localStorage.setItem('isEmailVerified', 'true');
+    
+    // Update UI
+    updateAuthUI();
+  } catch (error) {
+    console.error('Email verification error:', error);
+  }
+}
+
+// Function to handle phone verification
+async function handlePhoneVerification(event) {
+  event.preventDefault();
+  
+  const otp = document.getElementById('phone-otp').value;
+  
+  // Validate form
+  if (!otp) {
+    displayApiError('OTP is required');
+    return;
+  }
+  
+  try {
+    await apiRequest('/auth/verify-phone', 'POST', {
+      userId: sessionData.userId,
+      otp,
+    });
+    
+    // Update session data
+    sessionData.isPhoneVerified = true;
+    localStorage.setItem('isPhoneVerified', 'true');
+    
+    // Clear verification ID
+    sessionData.phoneVerificationId = null;
+    localStorage.removeItem('phoneVerificationId');
+    
+    // Update UI
+    updateAuthUI();
+  } catch (error) {
+    console.error('Phone verification error:', error);
+  }
+}
+
+// Function to resend email OTP
+async function handleResendEmailOTP() {
+  try {
+    await apiRequest('/auth/resend-email-otp', 'POST', {
+      userId: sessionData.userId,
     });
   } catch (error) {
-    displayResponse('loginResponse', error.message, true);
+    console.error('Resend email OTP error:', error);
   }
-});
+}
 
-// Handle logout
-document.getElementById('logoutBtn').addEventListener('click', async () => {
+// Function to resend phone OTP
+async function handleResendPhoneOTP() {
   try {
-    await api('/auth/logout', 'GET');
+    const response = await apiRequest('/auth/resend-phone-otp', 'POST', {
+      userId: sessionData.userId,
+    });
     
-    // Clear auth data
-    authToken = null;
-    currentUser = null;
-    
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('currentUser');
-    
-    // Update UI
-    updateAuthUI();
-    
-    // Display response as an alert
-    alert('Logged out successfully!');
-  } catch (error) {
-    alert(`Logout failed: ${error.message}`);
-  }
-});
-
-// Handle email verification form
-document.getElementById('verifyEmailForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  
-  const verificationData = {
-    email: document.getElementById('verifyEmailAddress').value,
-    otp: document.getElementById('emailOtp').value,
-  };
-  
-  try {
-    const response = await api('/auth/verify-email', 'POST', verificationData);
-    
-    // Update user data if current user
-    if (currentUser && currentUser.email === verificationData.email) {
-      currentUser.isEmailVerified = true;
-      localStorage.setItem('currentUser', JSON.stringify(currentUser));
-      updateAuthUI();
+    // Store verification ID if available
+    if (response && response.verificationId) {
+      sessionData.phoneVerificationId = response.verificationId;
+      localStorage.setItem('phoneVerificationId', response.verificationId);
     }
-    
-    // Display response
-    displayResponse('emailVerifyResponse', response);
   } catch (error) {
-    displayResponse('emailVerifyResponse', error.message, true);
+    console.error('Resend phone OTP error:', error);
   }
-});
+}
 
-// Handle phone verification form
-document.getElementById('verifyPhoneForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
+// Function to handle forgot password
+async function handleForgotPassword(event) {
+  event.preventDefault();
   
-  const verificationData = {
-    phoneNumber: document.getElementById('verifyPhoneNumber').value,
-    otp: document.getElementById('phoneOtp').value,
-  };
+  const email = document.getElementById('forgot-email').value;
   
-  try {
-    const response = await api('/auth/verify-phone', 'POST', verificationData);
-    
-    // Update user data if current user
-    if (currentUser && currentUser.phoneNumber === verificationData.phoneNumber) {
-      currentUser.isPhoneVerified = true;
-      localStorage.setItem('currentUser', JSON.stringify(currentUser));
-      updateAuthUI();
-    }
-    
-    // Display response
-    displayResponse('phoneVerifyResponse', response);
-  } catch (error) {
-    displayResponse('phoneVerifyResponse', error.message, true);
-  }
-});
-
-// Handle resend email OTP button
-document.getElementById('resendEmailOtp').addEventListener('click', async () => {
-  const email = document.getElementById('verifyEmailAddress').value;
-  
+  // Validate form
   if (!email) {
-    alert('Please enter your email address');
+    displayApiError('Email is required');
     return;
   }
   
   try {
-    const response = await api('/auth/resend-email-otp', 'POST', { email });
-    
-    // Display response
-    displayResponse('emailVerifyResponse', response);
-    
-    // Show an alert
-    alert('Email OTP resent! Check server console logs.');
+    await apiRequest('/auth/forgot-password', 'POST', {
+      email,
+    });
   } catch (error) {
-    displayResponse('emailVerifyResponse', error.message, true);
+    console.error('Forgot password error:', error);
   }
-});
+}
 
-// Handle resend SMS OTP button
-document.getElementById('resendSmsOtp').addEventListener('click', async () => {
-  const phoneNumber = document.getElementById('verifyPhoneNumber').value;
+// Function to handle reset password
+async function handleResetPassword(event) {
+  event.preventDefault();
   
-  if (!phoneNumber) {
-    alert('Please enter your phone number');
+  const token = document.getElementById('reset-token').value;
+  const password = document.getElementById('reset-password').value;
+  const confirmPassword = document.getElementById('reset-confirm-password').value;
+  
+  // Validate form
+  if (!token || !password) {
+    displayApiError('Token and password are required');
+    return;
+  }
+  
+  if (password !== confirmPassword) {
+    displayApiError('Passwords do not match');
     return;
   }
   
   try {
-    const response = await api('/auth/resend-sms-otp', 'POST', { phoneNumber });
+    await apiRequest('/auth/reset-password', 'POST', {
+      token,
+      password,
+    });
     
-    // Display response
-    displayResponse('phoneVerifyResponse', response);
-    
-    // Show an alert
-    alert('SMS OTP resent! Check server console logs.');
+    // Show login tab after successful reset
+    document.querySelector('[data-bs-target="#login-tab"]').click();
   } catch (error) {
-    displayResponse('phoneVerifyResponse', error.message, true);
+    console.error('Reset password error:', error);
   }
-});
+}
 
-// Handle forgot password form
-document.getElementById('forgotPasswordForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
+// Function to handle update password
+async function handleUpdatePassword(event) {
+  event.preventDefault();
   
-  const forgotData = {
-    email: document.getElementById('forgotEmail').value,
-  };
+  const currentPassword = document.getElementById('current-password').value;
+  const newPassword = document.getElementById('new-password').value;
+  const confirmPassword = document.getElementById('confirm-new-password').value;
   
-  try {
-    const response = await api('/auth/forgot-password', 'POST', forgotData);
-    
-    // Display response
-    displayResponse('forgotPasswordResponse', response);
-    
-    // Show an alert
-    alert('Password reset link sent! Check server console logs.');
-  } catch (error) {
-    displayResponse('forgotPasswordResponse', error.message, true);
-  }
-});
-
-// Handle reset password form
-document.getElementById('resetPasswordForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  
-  const resetData = {
-    token: document.getElementById('resetToken').value,
-    password: document.getElementById('newPassword').value,
-  };
-  
-  try {
-    const response = await api('/auth/reset-password', 'POST', resetData);
-    
-    // Save auth token and user data if received
-    if (response.token) {
-      authToken = response.token;
-      currentUser = response.data.user;
-      
-      localStorage.setItem('authToken', authToken);
-      localStorage.setItem('currentUser', JSON.stringify(currentUser));
-      
-      // Update UI
-      updateAuthUI();
-    }
-    
-    // Display response
-    displayResponse('resetPasswordResponse', response);
-  } catch (error) {
-    displayResponse('resetPasswordResponse', error.message, true);
-  }
-});
-
-// Handle update password form
-document.getElementById('updatePasswordForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  
-  if (!authToken) {
-    displayResponse('updatePasswordResponse', 'You must be logged in to update your password', true);
+  // Validate form
+  if (!currentPassword || !newPassword) {
+    displayApiError('All fields are required');
     return;
   }
   
-  const updateData = {
-    currentPassword: document.getElementById('currentPassword').value,
-    newPassword: document.getElementById('updatedPassword').value,
-  };
+  if (newPassword !== confirmPassword) {
+    displayApiError('New passwords do not match');
+    return;
+  }
   
   try {
-    const response = await api('/auth/update-password', 'PATCH', updateData);
-    
-    // Update auth token if a new one is provided
-    if (response.token) {
-      authToken = response.token;
-      localStorage.setItem('authToken', authToken);
-    }
-    
-    // Display response
-    displayResponse('updatePasswordResponse', response);
+    await apiRequest('/auth/update-password', 'PATCH', {
+      currentPassword,
+      newPassword,
+    });
   } catch (error) {
-    displayResponse('updatePasswordResponse', error.message, true);
+    console.error('Update password error:', error);
   }
-});
+}
 
-// Initialize the UI
-updateAuthUI(); 
+// Initialize event listeners
+document.addEventListener('DOMContentLoaded', () => {
+  // Signup form
+  const signupForm = document.getElementById('signup-form');
+  if (signupForm) {
+    signupForm.addEventListener('submit', handleSignup);
+  }
+  
+  // Login form
+  const loginForm = document.getElementById('login-form');
+  if (loginForm) {
+    loginForm.addEventListener('submit', handleLogin);
+  }
+  
+  // Logout button
+  const logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', handleLogout);
+  }
+  
+  // Email verification form
+  const emailVerifyForm = document.getElementById('email-verification-form');
+  if (emailVerifyForm) {
+    emailVerifyForm.addEventListener('submit', handleEmailVerification);
+  }
+  
+  // Phone verification form
+  const phoneVerifyForm = document.getElementById('phone-verification-form');
+  if (phoneVerifyForm) {
+    phoneVerifyForm.addEventListener('submit', handlePhoneVerification);
+  }
+  
+  // Resend email OTP button
+  const resendEmailBtn = document.getElementById('resend-email-otp-btn');
+  if (resendEmailBtn) {
+    resendEmailBtn.addEventListener('click', handleResendEmailOTP);
+  }
+  
+  // Resend phone OTP button
+  const resendPhoneBtn = document.getElementById('resend-phone-otp-btn');
+  if (resendPhoneBtn) {
+    resendPhoneBtn.addEventListener('click', handleResendPhoneOTP);
+  }
+  
+  // Forgot password form
+  const forgotPasswordForm = document.getElementById('forgot-password-form');
+  if (forgotPasswordForm) {
+    forgotPasswordForm.addEventListener('submit', handleForgotPassword);
+  }
+  
+  // Reset password form
+  const resetPasswordForm = document.getElementById('reset-password-form');
+  if (resetPasswordForm) {
+    resetPasswordForm.addEventListener('submit', handleResetPassword);
+  }
+  
+  // Update password form
+  const updatePasswordForm = document.getElementById('update-password-form');
+  if (updatePasswordForm) {
+    updatePasswordForm.addEventListener('submit', handleUpdatePassword);
+  }
+  
+  // Initialize UI based on auth state
+  updateAuthUI();
+}); 

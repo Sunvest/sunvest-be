@@ -1,53 +1,67 @@
 import mongoose, { Document, Schema } from 'mongoose';
-import bcrypt from 'bcryptjs';
+import validator from 'validator';
+import bcryptjs from 'bcryptjs';
+import crypto from 'crypto';
 
+// Define User interface
 export interface IUser extends Document {
   email: string;
   password: string;
   firstName: string;
-  lastName: string; 
-  phoneNumber: string;
+  lastName: string;
+  phone?: string;
+  role: 'user' | 'admin';
   isEmailVerified: boolean;
   isPhoneVerified: boolean;
-  emailOtp: string | null;
-  smsOtp: string | null;
-  otpExpiresAt: Date | null;
-  passwordResetToken: string | null;
-  passwordResetExpires: Date | null;
+  isActive: boolean;
+  emailOtp?: string;
+  phoneOtp?: string;
+  phoneVerificationId?: string; // Add Firebase phone verification ID
+  otpExpiry?: Date;
+  passwordResetToken?: string;
+  passwordResetExpires?: Date;
   createdAt: Date;
   updatedAt: Date;
-  comparePassword(candidatePassword: string): Promise<boolean>;
+  comparePassword(
+    candidatePassword: string, 
+    userPassword: string
+  ): Promise<boolean>;
+  createPasswordResetToken(): string;
 }
 
+// Create schema
 const userSchema = new Schema<IUser>(
   {
     email: {
       type: String,
-      required: [true, 'Email is required'],
+      required: [true, 'Please provide your email'],
       unique: true,
       lowercase: true,
-      trim: true,
+      validate: [validator.isEmail, 'Please provide a valid email'],
     },
     password: {
       type: String,
-      required: [true, 'Password is required'],
+      required: [true, 'Please provide a password'],
       minlength: 8,
       select: false,
     },
     firstName: {
       type: String,
-      required: [true, 'First name is required'],
-      trim: true,
+      required: [true, 'Please provide your first name'],
     },
     lastName: {
       type: String,
-      required: [true, 'Last name is required'],
-      trim: true,
+      required: [true, 'Please provide your last name'],
     },
-    phoneNumber: {
+    phone: {
       type: String,
-      required: [true, 'Phone number is required'],
-      trim: true,
+      unique: true,
+      sparse: true, // Allow multiple documents with no phone
+    },
+    role: {
+      type: String,
+      enum: ['user', 'admin'],
+      default: 'user',
     },
     isEmailVerified: {
       type: Boolean,
@@ -57,48 +71,57 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: false,
     },
-    emailOtp: {
-      type: String,
+    isActive: {
+      type: Boolean,
+      default: true,
     },
-    smsOtp: {
-      type: String,
-    },
-    otpExpiresAt: {
-      type: Date,
-    },
-    passwordResetToken: {
-      type: String,
-    },
-    passwordResetExpires: {
-      type: Date,
-    },
+    emailOtp: String,
+    phoneOtp: String,
+    phoneVerificationId: String, // Add Firebase phone verification ID
+    otpExpiry: Date,
+    passwordResetToken: String,
+    passwordResetExpires: Date,
   },
   {
     timestamps: true,
   }
 );
 
-// Hash password before saving
+// Pre-save middleware to hash password
 userSchema.pre('save', async function (next) {
-  // Only hash the password if it's modified or new
+  // Only run this if password was modified
   if (!this.isModified('password')) return next();
-  
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error: any) {
-    next(error);
-  }
+
+  // Hash password
+  const salt = await bcryptjs.genSalt(10);
+  this.password = await bcryptjs.hash(this.password, salt);
+  next();
 });
 
-// Method to compare password
+// Method to compare passwords
 userSchema.methods.comparePassword = async function (
-  candidatePassword: string
+  candidatePassword: string,
+  userPassword: string
 ): Promise<boolean> {
-  return bcrypt.compare(candidatePassword, this.password);
+  return await bcryptjs.compare(candidatePassword, userPassword);
 };
 
+// Method to create password reset token
+userSchema.methods.createPasswordResetToken = function (): string {
+  const resetToken = crypto.randomBytes(32).toString('hex');
+
+  this.passwordResetToken = crypto
+    .createHash('sha256')
+    .update(resetToken)
+    .digest('hex');
+
+  // Token expires in 10 minutes
+  this.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000);
+
+  return resetToken;
+};
+
+// Create model
 const User = mongoose.model<IUser>('User', userSchema);
 
 export default User; 

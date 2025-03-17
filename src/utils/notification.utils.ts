@@ -5,24 +5,53 @@ import {
   generatePasswordResetEmailContent
 } from './email.utils';
 
+// Import Firebase phone auth utilities
+import { generateFirebasePhoneOTP } from './firebase.utils';
+
 /**
- * Simulate sending an SMS (in a production environment, you would integrate with a real SMS service)
+ * Send SMS via Firebase Phone Authentication
  * @param to Phone number recipient
- * @param text SMS content
+ * @param text SMS content (not used with Firebase Phone Auth)
+ * @returns VerificationId and status
  */
-export const sendSMS = async (to: string, text: string): Promise<void> => {
-  // This is just a simulation for now
-  // In production, you would integrate with an SMS service like Twilio, Nexmo, etc.
-  
-  // Simulate SMS sending delay
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  
-  // Log the SMS instead of actually sending it
-  console.log('=======================================');
-  console.log('SMS Sent:');
-  console.log(`To: ${to}`);
-  console.log(`Body: ${text}`);
-  console.log('=======================================');
+export const sendSMS = async (
+  to: string,
+  text: string
+): Promise<{
+  verificationId: string;
+  status: string;
+}> => {
+  try {
+    // Generate and send OTP via Firebase
+    const result = await generateFirebasePhoneOTP(to);
+    
+    // Log for debugging
+    console.log('=======================================');
+    console.log('SMS Verification Initiated:');
+    console.log(`To: ${to}`);
+    console.log(`Status: ${result.status}`);
+    console.log(`VerificationId: ${result.verificationId}`);
+    console.log('=======================================');
+    
+    return result;
+  } catch (error) {
+    console.error('Error sending SMS:', error);
+    
+    // For fallback/testing, return mock verification ID
+    const mockResult = {
+      verificationId: `mock-verification-id-${Date.now()}`,
+      status: 'fallback',
+    };
+    
+    console.log('=======================================');
+    console.log('SMS FALLBACK - Firebase Auth failed:');
+    console.log(`To: ${to}`);
+    console.log(`Body: ${text}`);
+    console.log(`VerificationId: ${mockResult.verificationId}`);
+    console.log('=======================================');
+    
+    return mockResult;
+  }
 };
 
 /**
@@ -46,14 +75,21 @@ export const sendOTPEmail = async (
  * Send OTP via SMS
  * @param phoneNumber Recipient phone number
  * @param otp OTP code
+ * @returns Firebase verification ID (needed for verification)
  */
 export const sendOTPSMS = async (
   phoneNumber: string,
   otp: string
-): Promise<void> => {
+): Promise<string> => {
+  // When using Firebase Phone Auth, the OTP is sent directly by Firebase
+  // We don't need to send the OTP ourselves, but we still include it for legacy/fallback
   const text = `Your verification code is: ${otp}. This code will expire in 10 minutes.`;
   
-  await sendSMS(phoneNumber, text);
+  // Send SMS and get verification ID
+  const { verificationId } = await sendSMS(phoneNumber, text);
+  
+  // Return verification ID (needed for verification)
+  return verificationId;
 };
 
 /**

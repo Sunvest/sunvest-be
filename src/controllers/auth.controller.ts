@@ -12,6 +12,8 @@ import {
   sendOTPSMS,
   sendPasswordResetEmail,
 } from '../utils/notification.utils';
+import { verifyFirebasePhoneOTP } from '../utils/firebase.utils';
+import bcryptjs from 'bcryptjs';
 
 // Set cookie options
 const cookieOptions = {
@@ -46,54 +48,66 @@ const createSendToken = (user: any, statusCode: number, res: Response) => {
  */
 export const signup = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const { email, password, firstName, lastName, phoneNumber } = req.body;
+    const { email, password, firstName, lastName, phone } = req.body;
 
-    // Check if user already exists
+    // Validate required fields
+    if (!email || !password || !firstName || !lastName) {
+      return next(new AppError('All fields are required', 400));
+    }
+
+    // Check if user with email already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return next(new AppError('Email already in use', 400));
+      return next(new AppError('User with this email already exists', 400));
     }
 
-    // Create new user
+    // Check if user with phone already exists (if phone provided)
+    if (phone) {
+      const existingPhoneUser = await User.findOne({ phone });
+      if (existingPhoneUser) {
+        return next(new AppError('User with this phone number already exists', 400));
+      }
+    }
+
+    // Hash password
+    const salt = await bcryptjs.genSalt(10);
+    const hashedPassword = await bcryptjs.hash(password, salt);
+
+    // Generate OTPs for email and phone
+    const emailOtp = generateOTP();
+    const phoneOtp = generateOTP();
+
+    // Calculate OTP expiry (10 minutes from now)
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    // Initialize phoneVerificationId (will be set if phone is provided)
+    let phoneVerificationId = '';
+
+    // Send OTPs
+    await sendOTPEmail(email, emailOtp, firstName);
+    
+    // Send phone OTP if phone number provided
+    if (phone) {
+      phoneVerificationId = await sendOTPSMS(phone, phoneOtp);
+    }
+
+    // Create user
     const newUser = await User.create({
       email,
-      password,
+      password: hashedPassword,
       firstName,
       lastName,
-      phoneNumber,
+      phone,
+      emailOtp,
+      phoneOtp,
+      otpExpiry,
+      phoneVerificationId, // Store the Firebase verification ID
     });
 
-    // Generate OTPs for email and SMS verification
-    const emailOtp = generateOTP();
-    const smsOtp = generateOTP();
-    
-    // Set OTP expiration (10 minutes from now)
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    
-    // Update user with OTPs
-    newUser.emailOtp = emailOtp;
-    newUser.smsOtp = smsOtp;
-    newUser.otpExpiresAt = otpExpiresAt;
-    await newUser.save({ validateBeforeSave: false });
-    
-    // Send OTPs
-    try {
-      await sendOTPEmail(email, emailOtp, firstName);
-      await sendOTPSMS(phoneNumber, smsOtp);
-      
-      // Send token to client
-      createSendToken(newUser, 201, res);
-    } catch (error) {
-      // Reset OTPs in case of error
-      newUser.emailOtp = null;
-      newUser.smsOtp = null;
-      newUser.otpExpiresAt = null;
-      await newUser.save({ validateBeforeSave: false });
-      
-      return next(
-        new AppError('There was an error sending the verification code. Please try again later.', 500)
-      );
-    }
+    res.status(201).json({
+      message: 'User created successfully. Please verify your email and phone.',
+      userId: newUser._id,
+    });
   }
 );
 
@@ -111,7 +125,7 @@ export const login = catchAsync(
 
     // Check if user exists and password is correct
     const user = await User.findOne({ email }).select('+password');
-    if (!user || !(await user.comparePassword(password))) {
+    if (!user || !(await user.comparePassword(password, user.password))) {
       return next(new AppError('Incorrect email or password', 401));
     }
 
@@ -149,15 +163,15 @@ export const verifyEmail = catchAsync(
     if (
       !user.emailOtp ||
       user.emailOtp !== otp ||
-      !user.otpExpiresAt ||
-      new Date() > user.otpExpiresAt
+      !user.otpExpiry ||
+      new Date() > user.otpExpiry
     ) {
       return next(new AppError('Invalid or expired OTP', 400));
     }
 
     // Mark email as verified and clear OTP
     user.isEmailVerified = true;
-    user.emailOtp = null;
+    user.emailOtp = undefined;
     await user.save({ validateBeforeSave: false });
 
     // Send response
@@ -176,24 +190,24 @@ export const verifyPhone = catchAsync(
     const { phoneNumber, otp } = req.body;
 
     // Find user by phone number
-    const user = await User.findOne({ phoneNumber });
+    const user = await User.findOne({ phone: phoneNumber });
     if (!user) {
       return next(new AppError('User not found', 404));
     }
 
     // Check if OTP is valid and not expired
     if (
-      !user.smsOtp ||
-      user.smsOtp !== otp ||
-      !user.otpExpiresAt ||
-      new Date() > user.otpExpiresAt
+      !user.phoneOtp ||
+      user.phoneOtp !== otp ||
+      !user.otpExpiry ||
+      new Date() > user.otpExpiry
     ) {
       return next(new AppError('Invalid or expired OTP', 400));
     }
 
     // Mark phone as verified and clear OTP
     user.isPhoneVerified = true;
-    user.smsOtp = null;
+    user.phoneOtp = undefined;
     await user.save({ validateBeforeSave: false });
 
     // Send response
@@ -221,11 +235,11 @@ export const resendEmailOTP = catchAsync(
     const emailOtp = generateOTP();
     
     // Set OTP expiration (10 minutes from now)
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
     
     // Update user with new OTP
     user.emailOtp = emailOtp;
-    user.otpExpiresAt = otpExpiresAt;
+    user.otpExpiry = otpExpiry;
     await user.save({ validateBeforeSave: false });
     
     // Send OTP
@@ -238,8 +252,8 @@ export const resendEmailOTP = catchAsync(
       });
     } catch (error) {
       // Reset OTP in case of error
-      user.emailOtp = null;
-      user.otpExpiresAt = null;
+      user.emailOtp = undefined;
+      user.otpExpiry = undefined;
       await user.save({ validateBeforeSave: false });
       
       return next(
@@ -250,32 +264,54 @@ export const resendEmailOTP = catchAsync(
 );
 
 /**
- * Resend SMS OTP
+ * Resend phone OTP
+ * Handles both phoneNumber parameter (for regular verification)
+ * and userId parameter (for Firebase verification)
  */
-export const resendSmsOTP = catchAsync(
+export const resendPhoneOTP = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const { phoneNumber } = req.body;
-
-    // Find user by phone number
-    const user = await User.findOne({ phoneNumber });
+    const { phoneNumber, userId } = req.body;
+    
+    let user;
+    
+    // Find user either by phone number or user ID
+    if (phoneNumber) {
+      user = await User.findOne({ phone: phoneNumber });
+    } else if (userId) {
+      user = await User.findById(userId);
+    } else {
+      return next(new AppError('Phone number or user ID is required', 400));
+    }
+    
     if (!user) {
       return next(new AppError('User not found', 404));
     }
+    
+    // Check if phone number exists
+    if (!user.phone) {
+      return next(new AppError('No phone number associated with this account', 400));
+    }
+    
+    // Check if phone is already verified
+    if (user.isPhoneVerified) {
+      return next(new AppError('Phone is already verified', 400));
+    }
 
     // Generate new OTP
-    const smsOtp = generateOTP();
+    const phoneOtp = generateOTP();
     
     // Set OTP expiration (10 minutes from now)
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
     
-    // Update user with new OTP
-    user.smsOtp = smsOtp;
-    user.otpExpiresAt = otpExpiresAt;
-    await user.save({ validateBeforeSave: false });
-    
-    // Send OTP
+    // Send OTP and get verification ID
     try {
-      await sendOTPSMS(phoneNumber, smsOtp);
+      const phoneVerificationId = await sendOTPSMS(user.phone, phoneOtp);
+      
+      // Update user with new OTP
+      user.phoneOtp = phoneOtp;
+      user.otpExpiry = otpExpiry;
+      user.phoneVerificationId = phoneVerificationId;
+      await user.save({ validateBeforeSave: false });
       
       res.status(200).json({
         status: 'success',
@@ -283,8 +319,9 @@ export const resendSmsOTP = catchAsync(
       });
     } catch (error) {
       // Reset OTP in case of error
-      user.smsOtp = null;
-      user.otpExpiresAt = null;
+      user.phoneOtp = undefined;
+      user.otpExpiry = undefined;
+      user.phoneVerificationId = undefined;
       await user.save({ validateBeforeSave: false });
       
       return next(
@@ -323,8 +360,8 @@ export const forgotPassword = catchAsync(
       });
     } catch (error) {
       // Reset token fields in case of error
-      user.passwordResetToken = null;
-      user.passwordResetExpires = null;
+      user.passwordResetToken = undefined;
+      user.passwordResetExpires = undefined;
       await user.save({ validateBeforeSave: false });
 
       return next(
@@ -356,8 +393,8 @@ export const resetPassword = catchAsync(
 
     // Set new password and clear reset token fields
     user.password = password;
-    user.passwordResetToken = null;
-    user.passwordResetExpires = null;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
     await user.save();
 
     // Log user in by sending JWT
@@ -379,7 +416,7 @@ export const updatePassword = catchAsync(
     }
 
     // Check if current password is correct
-    if (!(await user.comparePassword(currentPassword))) {
+    if (!(await user.comparePassword(currentPassword, user.password))) {
       return next(new AppError('Your current password is incorrect', 401));
     }
 
@@ -390,4 +427,72 @@ export const updatePassword = catchAsync(
     // Log user in with new password (send new JWT)
     createSendToken(user, 200, res);
   }
-); 
+);
+
+/**
+ * In the verifyPhoneOTP method, use Firebase verification
+ */
+export const verifyPhoneOTP = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId, otp } = req.body;
+
+    if (!userId || !otp) {
+      res.status(400).json({ message: 'User ID and OTP are required' });
+      return;
+    }
+
+    // Find user
+    const user = await User.findById(userId);
+    if (!user) {
+      res.status(404).json({ message: 'User not found' });
+      return;
+    }
+
+    // Check if phone number exists
+    if (!user.phone) {
+      res.status(400).json({ message: 'No phone number associated with this account' });
+      return;
+    }
+
+    // Check if phone is already verified
+    if (user.isPhoneVerified) {
+      res.status(400).json({ message: 'Phone is already verified' });
+      return;
+    }
+
+    // Check if verification ID exists
+    if (!user.phoneVerificationId) {
+      res.status(400).json({ message: 'No verification in progress. Request a new OTP' });
+      return;
+    }
+
+    // Use Firebase to verify the OTP
+    const isVerified = await verifyFirebasePhoneOTP(user.phoneVerificationId, otp);
+
+    // If fallback mode is used or Firebase verification failed, verify with stored OTP
+    if (!isVerified) {
+      // Check if OTP is expired
+      if (user.otpExpiry && user.otpExpiry < new Date()) {
+        res.status(400).json({ message: 'OTP has expired. Request a new one' });
+        return;
+      }
+
+      // Check if OTP matches
+      if (user.phoneOtp !== otp) {
+        res.status(400).json({ message: 'Invalid OTP' });
+        return;
+      }
+    }
+
+    // Update user
+    user.isPhoneVerified = true;
+    user.phoneOtp = undefined;
+    user.phoneVerificationId = undefined;
+    await user.save();
+
+    res.status(200).json({ message: 'Phone verified successfully' });
+  } catch (error) {
+    console.error('Phone verification error:', error);
+    res.status(500).json({ message: 'Server error during phone verification' });
+  }
+}; 
